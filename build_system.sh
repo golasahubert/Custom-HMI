@@ -22,10 +22,10 @@ sudo docker compose down -v --remove-orphans > /dev/null 2>&1 || true
 sudo docker network prune -f > /dev/null 2>&1 || true
 
 log "Building all Docker images..."
-sudo docker-compose build --no-cache
+sudo docker compose build --no-cache
 
 log "Starting all containers..."
-sudo docker-compose up -d
+sudo docker compose up -d
 
 # --- SEKCJA HEALTHCHECK ---
 # ScadaLTS i OpenPLC potrzebują czasu. Zamiast sleep, czekamy na port (np. 8080 dla ScadaLTS lub 502 dla OpenPLC)
@@ -88,6 +88,6 @@ log "Build and setup complete."
 
 # Opcjonalny restart - jeśli ScadaLTS wymaga przeładowania configów
 log "Restarting the environment..."
-sudo docker-compose restart
+sudo docker compose restart
 
 log "System Ready."
