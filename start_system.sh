@@ -1,3 +1,3 @@
 #!/bin/bash
 
-sudo docker compose start
+sudo docker-compose start

@@ -16,7 +16,7 @@ services:
       context: ./frontend
     container_name: hmi-custom-frontend
     ports:
-      - "8000:80"
+      - "80:80"
     networks:
       br_network:
         ipv4_address: 172.25.0.8

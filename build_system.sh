@@ -26,9 +26,9 @@ else
 fi
 
 log "Updating APT and installing required system packages..."
+# Usunąłem netcat, bo wracamy do sleep
 sudo apt update
-# Dodajemy netcat-openbsd do healthchecka
-sudo apt install -y python3-venv docker.io docker-compose netcat-openbsd
+sudo apt install -y python3-venv docker.io docker-compose
 
 log "Ensuring (again) that previous environment is stopped..."
 if [ -f "kill_docker.sh" ]; then
@@ -40,26 +40,12 @@ fi
 log "Building and Starting containers..."
 sudo docker-compose up -d --build
 
-# --- KROK 3: HEALTHCHECK ---
+log "Waiting for containers to initialize..."
+# POWRÓT DO LOGIKI SKRYPTU 2: Prosty sleep zamiast pętli.
+# Zwiększyłem do 10s dla bezpieczeństwa (bazy danych), ale to tylko pauza.
+sleep 10
 
-TARGET_HOST="localhost"
-TARGET_PORT="8080" # Port ScadaLTS
-log "Waiting for services to initialize on port $TARGET_PORT..."
-
-for i in {1..60}; do
-    if nc -z $TARGET_HOST $TARGET_PORT; then
-        log "Service is UP!"
-        break
-    fi
-    echo -n "."
-    sleep 2
-done
-
-if ! nc -z $TARGET_HOST $TARGET_PORT; then
-    err "Warning: Service port is not reachable yet. Proceeding anyway, but scripts might fail."
-fi
-
-# --- KROK 4: PYTHON I PLAYWRIGHT ---
+# --- KROK 3: PYTHON I PLAYWRIGHT ---
 
 log "Setting up Python virtual environment..."
 cd automation
@@ -77,4 +63,40 @@ VENV_PLAYWRIGHT="$(pwd)/venv/bin/playwright"
 if [ -f "requirements.txt" ]; then
     log "Installing Python dependencies..."
     $VENV_PIP install --upgrade pip
-    $VENV_PIP install -r requirements
+    $VENV_PIP install -r requirements.txt
+fi
+
+# --- SEKCJA PLAYWRIGHT ---
+# Sprawdzamy czy playwright się zainstalował w venv
+if [ -f "$VENV_PLAYWRIGHT" ]; then
+    log "Installing Playwright browsers and dependencies..."
+    
+    # 1. Instalacja binarek przeglądarek
+    $VENV_PLAYWRIGHT install
+    
+    # 2. Instalacja zależności systemowych (sudo)
+    sudo $VENV_PLAYWRIGHT install-deps
+else
+    log "Playwright executable not found in venv. Skipping browser setup."
+fi
+
+log "Running setup_import.sh..."
+sudo bash setup_import.sh
+
+cd ..
+
+log "Build and setup complete."
+
+# --- KROK 4: RESTART KOŃCOWY ---
+
+log "Restarting the environment..."
+
+if [ -f "stop_system.sh" ] && [ -f "start_system.sh" ]; then
+    sudo bash stop_system.sh
+    sudo bash start_system.sh
+else
+    log "External scripts not found, using docker-compose restart..."
+    sudo docker-compose restart
+fi
+
+log "System Ready. Restart Complete."
