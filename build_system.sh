@@ -3,7 +3,7 @@
 set -e  # Zatrzymuje skrypt przy każdym błędzie
 cd "$(dirname "$0")"
 
-# Kolory dla lepszej czytelności logów
+# --- KONFIGURACJA KOLORÓW ---
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
@@ -16,28 +16,36 @@ err() {
     echo -e "${RED}[✘] $1${NC}"
 }
 
-echo "[+] Updating APT and installing required system packages..."
+# --- KROK 1: CZYSZCZENIE I INSTALACJA ZALEŻNOŚCI ---
+
+log "Ensuring that previous environment is stopped..."
+if [ -f "kill_docker.sh" ]; then
+    sudo bash kill_docker.sh
+else
+    sudo docker-compose down -v --remove-orphans > /dev/null 2>&1 || true
+fi
+
+log "Updating APT and installing required system packages..."
 sudo apt update
-sudo apt install -y python3-venv docker.io docker-compose
+# Dodajemy netcat-openbsd do healthchecka
+sudo apt install -y python3-venv docker.io docker-compose netcat-openbsd
 
-log "Forcing a full cleanup of the previous Docker environment..."
-# Używamy || true, aby skrypt nie przerwał się, jeśli nie ma co usuwać
-sudo docker compose down -v --remove-orphans > /dev/null 2>&1 || true
-sudo docker network prune -f > /dev/null 2>&1 || true
+log "Ensuring (again) that previous environment is stopped..."
+if [ -f "kill_docker.sh" ]; then
+    sudo bash kill_docker.sh
+fi
 
-log "Building all Docker images..."
-sudo docker-compose build --no-cache
+# --- KROK 2: BUDOWANIE I START ---
 
-log "Starting all containers..."
-sudo docker-compose up -d
+log "Building and Starting containers..."
+sudo docker-compose up -d --build
 
-# --- SEKCJA HEALTHCHECK ---
-# ScadaLTS i OpenPLC potrzebują czasu. Zamiast sleep, czekamy na port (np. 8080 dla ScadaLTS lub 502 dla OpenPLC)
-# Wymaga zainstalowanego netcat (nc). Jeśli nie masz, dodaj: sudo apt install netcat-openbsd
+# --- KROK 3: HEALTHCHECK ---
+
 TARGET_HOST="localhost"
-TARGET_PORT="8080" # Zmień na port, na którym nasłuchuje Twoja główna usługa (np. ScadaLTS)
-
+TARGET_PORT="8080" # Port ScadaLTS
 log "Waiting for services to initialize on port $TARGET_PORT..."
+
 for i in {1..60}; do
     if nc -z $TARGET_HOST $TARGET_PORT; then
         log "Service is UP!"
@@ -47,12 +55,11 @@ for i in {1..60}; do
     sleep 2
 done
 
-# Jeśli po pętli usługa nadal nie działa, może warto przerwać?
 if ! nc -z $TARGET_HOST $TARGET_PORT; then
-    err "Service did not start in time. Check logs."
-    # exit 1  # Odkomentuj, jeśli chcesz przerywać w tym momencie
+    err "Warning: Service port is not reachable yet. Proceeding anyway, but scripts might fail."
 fi
-# --------------------------
+
+# --- KROK 4: PYTHON I PLAYWRIGHT ---
 
 log "Setting up Python virtual environment..."
 cd automation
@@ -62,36 +69,12 @@ if [ ! -d "venv" ]; then
     python3 -m venv venv || { err "Failed to create virtual environment."; exit 1; }
 fi
 
-# Zamiast aktywować venv i używać sudo (co gubi ścieżki),
-# używamy bezpośredniej ścieżki do pip i python wewnątrz venv.
-# To gwarantuje użycie właściwych bibliotek.
-
+# Definicja ścieżek do venv
 VENV_PYTHON="$(pwd)/venv/bin/python"
 VENV_PIP="$(pwd)/venv/bin/pip"
+VENV_PLAYWRIGHT="$(pwd)/venv/bin/playwright"
 
 if [ -f "requirements.txt" ]; then
     log "Installing Python dependencies..."
     $VENV_PIP install --upgrade pip
-    $VENV_PIP install -r requirements.txt
-fi
-
-log "Running setup_import.sh..."
-# WAŻNE: Jeśli setup_import.sh wywołuje skrypty pythonowe,
-# upewnij się, że w środku tego skryptu wywołujesz je przez "$VENV_PYTHON script.py",
-# lub przekaż ścieżkę do interpretera.
-# Jeśli setup_import.sh musi być sudo, użyj sudo z zachowaniem środowiska (trudne)
-# LUB wywołaj pythona bezpośrednio z uprawnieniami (jeśli to kod pythonowy robi robotę):
-# sudo $VENV_PYTHON skrypt_konfiguracyjny.py
-
-# Zakładam, że setup_import.sh to wrapper. Uruchamiamy go:
-sudo bash setup_import.sh
-
-cd ..
-
-log "Build and setup complete."
-
-# Opcjonalny restart - jeśli ScadaLTS wymaga przeładowania configów
-log "Restarting the environment..."
-sudo docker-compose restart
-
-log "System Ready."
+    $VENV_PIP install -r requirements
